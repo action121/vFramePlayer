@@ -65,6 +65,8 @@
 		this._asc = true;
 		//临时变量
 		this._temp = {};
+		// canvas对象
+		this.canvas = null;
 
 		for (var k in options.imgArr) {
 			var img = new Image();
@@ -78,10 +80,10 @@
 
 	var loadImg = function (imgObj, callback) {
 		if (imgObj.complete) {
-			callback();
+			callback(imgObj);
 		} else {
 			imgObj.onload = function () {
-				callback();
+				callback(imgObj);
 			};
 		}
 	};
@@ -98,14 +100,11 @@
 				canvas.style.width = canvas.style.height = "100%";
 				this.ctx = canvas.getContext("2d");
 				this.dom.appendChild(canvas);
+				this.canvas = canvas;
 
-				var setWH = function () {
-					_this._isPng = /(\.png(\?|$))|(image\/png;base64)/.test(_this._imgObjArr[0].src);
-					_this.width = canvas.width = _this._imgObjArr[0].width;
-					_this.height = canvas.height = _this._imgObjArr[0].height;
-				};
-
-				loadImg(this._imgObjArr[0], setWH);
+				loadImg(this._imgObjArr[0], function(imageObj){
+					_this.setCanvasWH(imageObj)
+				});
 
 			} else {
 
@@ -122,6 +121,13 @@
 				}
 
 			}
+		},
+		setCanvasWH: function (imageObj) {
+			var _this = this;
+
+			_this._isPng = /(\.png(\?|$))|(image\/png;base64)/.test(imageObj.src);
+			_this.width = _this.canvas.width = imageObj.width;
+			_this.height = _this.canvas.height = imageObj.height;
 		},
 		//设置参数
 		set: function (attr, value) {
@@ -196,7 +202,7 @@
 				if (_this._imgObjArr[_this.curFrame].complete) {
 
 					if (_this.useCanvas) {
-						if (_this._isPng)_this.ctx.clearRect(0, 0, _this.width, _this.height);
+						_this.ctx.clearRect(0, 0, _this.width, _this.height);
 						_this.ctx.drawImage(_this._imgObjArr[_this.curFrame], 0, 0, _this.width, _this.height);
 					} else {
 						_this.mc.childNodes[_this.prevFrame].style.opacity = 0;
@@ -213,9 +219,14 @@
 
 					//当yoyo为true时，如果当前帧等于开始或者结束帧 并且 不是第一次播放
 					//当yoyo为false时，如果当前帧等于开始或者结束帧 并且 没有进入过判断
+					// 防止只配置了一个图，或者 _this.startFrame == _this.endFrame 的情况出现，curFrame判断错误，导致播放其它不相关的图片
 					if (
-						(_this.curFrame == _this.endFrame || _this.curFrame == _this.startFrame) && _this._isPlay && !_this._temp.repeat
-					) {
+						_this.startFrame == _this.endFrame ||
+						(
+							(_this.curFrame == _this.endFrame || _this.curFrame == _this.startFrame)
+							&& _this._isPlay
+							&& !_this._temp.repeat
+						)) {
 
 						if (_this.loop && (_this._times + 1 < _this.loop || _this.loop == -1)) {
 							if (_this.yoyo) {
@@ -256,9 +267,12 @@
 			var _this = this;
 			this.curFrame = id;
 
-			var show = function () {
+			var show = function (imageObj) {
 				if (_this.useCanvas) {
-					if (_this._isPng) _this.ctx.clearRect(0, 0, _this.width, _this.height);
+					if (!_this.width || !_this.height) {
+						_this.setCanvasWH(imageObj)
+					}
+					_this.ctx.clearRect(0, 0, _this.width, _this.height);
 					_this.ctx.drawImage(_this._imgObjArr[_this.curFrame], 0, 0, _this.width, _this.height);
 				} else {
 					_this.mc.childNodes[_this.prevFrame].style.opacity = 0;
@@ -270,6 +284,46 @@
 			loadImg(this._imgObjArr[this.curFrame], show);
 
 		},
+        // 指定区间内跳跃播放
+        // 由于大多数浏览器setInterval能执行的最小时间为10ms，所以一秒能播放的最大帧数也就是100帧左右，
+        // 想要突破这个限制，使序列帧看起来能播放的更快，只能使用跳帧的方式模拟快速播放
+        // 例：jumpPlay(0, 480, 10)，会播放0-480帧，但是只会播放第10帧，20帧，30帧，40帧，50帧...
+        // 支持倒叙播放（start > end），例如：jumpPlay(480, 0, 10)会播放第480帧，470帧，460帧，450帧，440帧...
+        // 注：space最小值为1
+        jumpPlay: function (startIndex, endIndex, space, callback) {
+            if (space < 1) return;
+
+            let timer = null;
+            let start = 0
+            const temp = []
+            let startPlayIndex = startIndex > endIndex ? endIndex : startIndex;
+            let endPlayIndex = startIndex > endIndex ? startIndex : endIndex;
+
+			this._isJumpPlay = true;
+
+            for (let i = startPlayIndex; i<= endPlayIndex; i += space) {
+                if (startIndex > endIndex) {
+                    temp.unshift(i)
+                } else {
+                    temp.push(i)
+                }
+            }
+            // 手动修正计算误差
+            temp.unshift(startIndex)
+            temp.push(endIndex)
+
+            timer = setInterval(() => {
+                if (start < temp.length-1) {
+                    start++
+                    this.goto(temp[start])
+                }  else {
+                    clearInterval(timer)
+                    timer = null
+					this._isJumpPlay = false;
+					if (callback) callback()
+                }
+            }, 4)
+        },
 		pause: function () {
 			this._isPlay = false;
 			this.trigger("pause");
